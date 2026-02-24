@@ -47,7 +47,7 @@ Then open:
 
 Below is a sample preview capture of the HTML page UI. This screenshot is illustrative and may not show a fully converged render (it is not a benchmark or final-quality output image).
 
-![Three Raytracer page preview](three_raytracer.html.png)
+![Three Raytracer page preview](screenshot.png)
 
 ## Notes
 
