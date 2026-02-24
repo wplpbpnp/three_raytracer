@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Three.js Real-Time Ray Tracer (Single-File)</title>
+  <style>
+    :root{
+      --bg0:#05060a;
+      --bg1:#080a12;
+      --ink:#e9ecff;
+      --muted:#b8bddc;
+      --dim:#8a90b6;
+      --line:rgba(255,255,255,.12);
+      --teal:#80ffe8;
+      --amber:#ffd166;
+      --red:#ff3b5c;
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      background:
+        radial-gradient(900px 650px at 12% 0%, rgba(128,255,232,.12), transparent 62%),
+        radial-gradient(900px 650px at 86% 10%, rgba(255,209,102,.10), transparent 62%),
+        linear-gradient(180deg, var(--bg0), var(--bg1));
+      color: var(--ink);
+      font: 12px/1.25 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      overflow: hidden;
+    }
+
+    #app{
+      position: fixed;
+      inset: 0;
+      display: grid;
+      grid-template-columns: 1fr;
+    }
+
+    canvas{
+      width:100%;
+      height:100%;
+      display:block;
+      image-rendering: auto;
+    }
+
+    .hud{
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      z-index: 10;
+      max-width: 520px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      border-radius: 12px;
+      padding: 10px 10px;
+      box-shadow: 0 20px 70px rgba(0,0,0,.45);
+    }
+    .hud .row{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.04);
+      padding: 6px 8px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .dot{
+      width: 7px;
+      height: 7px;
+      border-radius: 99px;
+      background: var(--teal);
+      box-shadow: 0 0 0 4px rgba(128,255,232,.12);
+    }
+    .dot.amber{ background: var(--amber); box-shadow: 0 0 0 4px rgba(255,209,102,.12); }
+    .dot.red{ background: var(--red); box-shadow: 0 0 0 4px rgba(255,59,92,.10); }
+
+    .title{
+      font-weight: 900;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+      font-size: 12px;
+      margin: 0 0 6px;
+    }
+    .help{
+      margin-top: 8px;
+      color: var(--dim);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .help b{ color: var(--muted); font-weight: 900; }
+    .btns{
+      margin-top: 8px;
+      display:flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items:center;
+    }
+    button{
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.04);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 7px 10px;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    button:hover{
+      border-color: rgba(128,255,232,.35);
+      box-shadow: 0 0 0 4px rgba(128,255,232,.08);
+    }
+    .warn{
+      position: fixed;
+      left: 12px;
+      bottom: 12px;
+      right: 12px;
+      z-index: 10;
+      border: 1px solid rgba(255,209,102,.25);
+      background: rgba(255,209,102,.08);
+      color: rgba(255,239,199,.92);
+      border-radius: 12px;
+      padding: 10px 10px;
+      display:none;
+      box-shadow: 0 20px 70px rgba(0,0,0,.45);
+    }
+    .warn a{ color: rgba(255,239,199,.98); text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div class="hud" aria-label="HUD">
+    <div class="title">Three.js GPU Ray Tracer (progressive)</div>
+    <div class="row">
+      <span class="pill"><span class="dot" aria-hidden="true"></span>samples: <b id="samples">0</b></span>
+      <span class="pill"><span class="dot amber" aria-hidden="true"></span>fps: <b id="fps">--</b></span>
+      <span class="pill"><span class="dot red" aria-hidden="true"></span>mode: <b id="mode">path</b></span>
+    </div>
+    <div class="help">
+      <b>orbit</b>: drag (left mouse / touch). <b>zoom</b>: wheel / pinch. <b>pan</b>: right-drag.
+      Movement resets accumulation.
+    </div>
+    <div class="btns">
+      <button id="reset">reset samples</button>
+      <button id="quality">toggle quality</button>
+    </div>
+  </div>
+
+  <div class="warn" id="warn">
+    If you see an import error: this file uses ES module imports for Three.js from a CDN.
+    If your browser blocks module imports from <code>file://</code>, serve the folder with a local HTTP server
+    (example: <code>python3 -m http.server</code>) and open <code>http://localhost:8000/three_raytracer.html</code>.
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+    const app = document.getElementById("app");
+    const elSamples = document.getElementById("samples");
+    const elFps = document.getElementById("fps");
+    const elMode = document.getElementById("mode");
+    const elWarn = document.getElementById("warn");
+
+    // --- Minimal orbit controls (no external deps) ---
+    function makeOrbit(camera, dom) {
+      const state = {
+        target: new THREE.Vector3(0, 1.0, 0),
+        radius: 4.0,
+        theta: 0.75, // yaw
+        phi: 0.95,   // pitch
+        dragging: false,
+        panning: false,
+        lastX: 0,
+        lastY: 0,
+        panScale: 1.0,
+      };
+
+      function clampPhi() {
+        const eps = 0.001;
+        state.phi = Math.max(eps, Math.min(Math.PI - eps, state.phi));
+      }
+
+      function apply() {
+        clampPhi();
+        const sinPhi = Math.sin(state.phi);
+        const dir = new THREE.Vector3(
+          Math.cos(state.theta) * sinPhi,
+          Math.cos(state.phi),
+          Math.sin(state.theta) * sinPhi
+        );
+        const pos = new THREE.Vector3().copy(state.target).addScaledVector(dir, state.radius);
+        camera.position.copy(pos);
+        camera.lookAt(state.target);
+        camera.updateMatrixWorld(true);
+      }
+
+      function pan(dx, dy) {
+        // Pan in camera plane.
+        const right = new THREE.Vector3();
+        const up = new THREE.Vector3();
+        camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+        const scale = state.panScale * state.radius * 0.0016;
+        state.target.addScaledVector(right, -dx * scale);
+        state.target.addScaledVector(up, dy * scale);
+      }
+
+      function onWheel(e) {
+        const d = Math.sign(e.deltaY);
+        state.radius *= (d > 0) ? 1.08 : 0.92;
+        state.radius = Math.max(0.5, Math.min(30.0, state.radius));
+        apply();
+        e.preventDefault();
+      }
+
+      dom.addEventListener("wheel", onWheel, { passive: false });
+
+      dom.addEventListener("pointerdown", (e) => {
+        dom.setPointerCapture(e.pointerId);
+        state.dragging = (e.button === 0);
+        state.panning = (e.button === 2);
+        state.lastX = e.clientX;
+        state.lastY = e.clientY;
+      });
+
+      dom.addEventListener("pointermove", (e) => {
+        if (!state.dragging && !state.panning) return;
+        const dx = e.clientX - state.lastX;
+        const dy = e.clientY - state.lastY;
+        state.lastX = e.clientX;
+        state.lastY = e.clientY;
+
+        if (state.dragging) {
+          state.theta -= dx * 0.006;
+          state.phi -= dy * 0.006;
+        } else if (state.panning) {
+          pan(dx, dy);
+        }
+        apply();
+      });
+
+      dom.addEventListener("pointerup", (e) => {
+        state.dragging = false;
+        state.panning = false;
+        dom.releasePointerCapture(e.pointerId);
+      });
+
+      // Disable context menu to allow right-drag pan.
+      dom.addEventListener("contextmenu", (e) => e.preventDefault());
+
+      apply();
+      return { state, apply };
+    }
+
+    // --- Renderer ---
+    const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    app.appendChild(renderer.domElement);
+
+    // Fullscreen pass scene
+    const quadScene = new THREE.Scene();
+    const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    // View camera (for ray generation)
+    const viewCam = new THREE.PerspectiveCamera(55, 1, 0.05, 200.0);
+    const orbit = makeOrbit(viewCam, renderer.domElement);
+
+    // Ping-pong accumulation targets
+    let rtA, rtB;
+    let frame = 0;
+    let highQuality = true;
+
+    function makeRT(w, h) {
+      // Float render targets improve accumulation; HalfFloat is more widely supported.
+      const rt = new THREE.WebGLRenderTarget(w, h, {
+        format: THREE.RGBAFormat,
+        type: THREE.HalfFloatType,
+        depthBuffer: false,
+        stencilBuffer: false,
+        magFilter: THREE.NearestFilter,
+        minFilter: THREE.NearestFilter,
+        wrapS: THREE.ClampToEdgeWrapping,
+        wrapT: THREE.ClampToEdgeWrapping
+      });
+      rt.texture.generateMipmaps = false;
+      rt.texture.colorSpace = THREE.NoColorSpace;
+      return rt;
+    }
+
+    // --- Shaders ---
+    const commonGLSL = `
+      precision highp float;
+
+      uniform vec2 uResolution;
+      uniform int uFrame;
+      uniform float uTime;
+
+      uniform vec3 uCamPos;
+      uniform vec3 uCamRight;
+      uniform vec3 uCamUp;
+      uniform vec3 uCamForward;
+      uniform float uTanFov;
+      uniform float uAspect;
+
+      uniform sampler2D uPrev;
+
+      // Hash-based RNG (deterministic per pixel + frame).
+      float hash12(vec2 p){
+        vec3 p3  = fract(vec3(p.xyx) * 0.1031);
+        p3 += dot(p3, p3.yzx + 33.33);
+        return fract((p3.x + p3.y) * p3.z);
+      }
+
+      vec2 hash22(vec2 p){
+        float n = hash12(p);
+        return vec2(n, hash12(p + n + 19.19));
+      }
+
+      // Cosine-weighted hemisphere sampling around normal.
+      vec3 cosineHemisphere(vec3 n, vec2 r){
+        float phi = 6.28318530718 * r.x;
+        float cosTheta = sqrt(1.0 - r.y);
+        float sinTheta = sqrt(r.y);
+        vec3 h = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+
+        // Build orthonormal basis
+        vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 t = normalize(cross(up, n));
+        vec3 b = cross(n, t);
+        return normalize(t * h.x + b * h.y + n * h.z);
+      }
+
+      struct Hit {
+        float t;
+        vec3 n;
+        vec3 albedo;
+        float emissive;
+      };
+
+      bool hitSphere(vec3 ro, vec3 rd, vec3 c, float r, out float t, out vec3 n){
+        vec3 oc = ro - c;
+        float b = dot(oc, rd);
+        float c2 = dot(oc, oc) - r*r;
+        float h = b*b - c2;
+        if (h < 0.0) return false;
+        h = sqrt(h);
+        float t0 = -b - h;
+        float t1 = -b + h;
+        t = (t0 > 0.001) ? t0 : ((t1 > 0.001) ? t1 : -1.0);
+        if (t < 0.0) return false;
+        vec3 p = ro + rd * t;
+        n = normalize(p - c);
+        return true;
+      }
+
+      bool hitPlane(vec3 ro, vec3 rd, vec3 p0, vec3 n0, out float t, out vec3 n){
+        float denom = dot(rd, n0);
+        if (abs(denom) < 1e-4) return false;
+        t = dot(p0 - ro, n0) / denom;
+        if (t <= 0.001) return false;
+        n = (denom < 0.0) ? n0 : -n0;
+        return true;
+      }
+
+      bool intersectScene(vec3 ro, vec3 rd, out Hit hit){
+        hit.t = 1e20;
+        hit.n = vec3(0.0);
+        hit.albedo = vec3(0.0);
+        hit.emissive = 0.0;
+
+        // Ground plane
+        float t; vec3 n;
+        if (hitPlane(ro, rd, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), t, n)) {
+          if (t < hit.t) {
+            hit.t = t;
+            hit.n = n;
+            // Checker-ish albedo
+            vec3 p = ro + rd * t;
+            float check = step(0.5, fract(p.x * 0.5) + fract(p.z * 0.5));
+            vec3 a0 = vec3(0.18, 0.19, 0.22);
+            vec3 a1 = vec3(0.65, 0.62, 0.56);
+            hit.albedo = mix(a0, a1, check);
+            hit.emissive = 0.0;
+          }
+        }
+
+        // Spheres
+        float ts; vec3 ns;
+        if (hitSphere(ro, rd, vec3(-1.2, 1.0, -0.4), 1.0, ts, ns)) {
+          if (ts < hit.t) {
+            hit.t = ts;
+            hit.n = ns;
+            hit.albedo = vec3(0.92, 0.28, 0.32);
+            hit.emissive = 0.0;
+          }
+        }
+        if (hitSphere(ro, rd, vec3(1.35, 0.85, 0.65), 0.85, ts, ns)) {
+          if (ts < hit.t) {
+            hit.t = ts;
+            hit.n = ns;
+            hit.albedo = vec3(0.25, 0.80, 0.82);
+            hit.emissive = 0.0;
+          }
+        }
+        // Small emissive "lamp"
+        if (hitSphere(ro, rd, vec3(0.2, 3.4, -1.0), 0.35, ts, ns)) {
+          if (ts < hit.t) {
+            hit.t = ts;
+            hit.n = ns;
+            hit.albedo = vec3(1.0);
+            hit.emissive = 8.0;
+          }
+        }
+
+        return hit.t < 1e19;
+      }
+
+      vec3 sky(vec3 rd){
+        float t = clamp(0.5 * (rd.y + 1.0), 0.0, 1.0);
+        vec3 a = vec3(0.06, 0.07, 0.11);
+        vec3 b = vec3(0.20, 0.24, 0.36);
+        vec3 col = mix(a, b, t);
+        // A faint "sun" lobe
+        vec3 sunDir = normalize(vec3(-0.4, 0.9, 0.1));
+        float s = pow(max(dot(rd, sunDir), 0.0), 250.0);
+        col += vec3(1.0, 0.9, 0.7) * s * 3.5;
+        return col;
+      }
+
+      float shadow(vec3 ro, vec3 rd){
+        Hit h;
+        if (intersectScene(ro, rd, h)) return 0.0;
+        return 1.0;
+      }
+    `;
+
+    const ptVert = `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `;
+
+    const ptFrag = `
+      varying vec2 vUv;
+      ${commonGLSL}
+
+      void main(){
+        vec2 frag = gl_FragCoord.xy;
+
+        // Jittered pixel for AA / sampling.
+        vec2 r = hash22(frag + float(uFrame) * 17.0);
+        vec2 jitter = (r - 0.5) / uResolution;
+        vec2 uv = (frag + 0.5) / uResolution + jitter;
+
+        vec2 d = uv * 2.0 - 1.0;
+        d.x *= uAspect;
+
+        vec3 rd = normalize(uCamForward + (d.x * uTanFov) * uCamRight + (d.y * uTanFov) * uCamUp);
+        vec3 ro = uCamPos;
+
+        vec3 throughput = vec3(1.0);
+        vec3 radiance = vec3(0.0);
+
+        int maxBounces = ${/* toggled in JS by define-style replacement */""}3;
+        for (int bounce = 0; bounce < 6; bounce++){
+          if (bounce >= maxBounces) break;
+
+          Hit hit;
+          if (!intersectScene(ro, rd, hit)){
+            radiance += throughput * sky(rd);
+            break;
+          }
+
+          vec3 p = ro + rd * hit.t;
+          vec3 n = hit.n;
+
+          if (hit.emissive > 0.0){
+            radiance += throughput * (hit.albedo * hit.emissive);
+            break;
+          }
+
+          // Simple direct light from the lamp + a weak sun.
+          vec3 lampPos = vec3(0.2, 3.4, -1.0);
+          vec3 lp = lampPos - p;
+          float ldist = length(lp);
+          vec3 ldir = lp / max(ldist, 1e-4);
+          float ndl = max(dot(n, ldir), 0.0);
+          float occ = shadow(p + n * 0.01, ldir);
+          vec3 lampCol = vec3(1.0, 0.95, 0.85) * 18.0;
+          radiance += throughput * hit.albedo * lampCol * ndl * occ / (ldist * ldist);
+
+          vec3 sunDir = normalize(vec3(-0.4, 0.9, 0.1));
+          float nds = max(dot(n, sunDir), 0.0);
+          float occ2 = shadow(p + n * 0.01, sunDir);
+          radiance += throughput * hit.albedo * vec3(1.0, 0.95, 0.85) * 0.35 * nds * occ2;
+
+          // Diffuse bounce
+          vec2 rr = hash22(frag + float(uFrame) * 91.0 + float(bounce) * 13.0);
+          vec3 newDir = cosineHemisphere(n, rr);
+
+          ro = p + n * 0.01;
+          rd = newDir;
+          throughput *= hit.albedo;
+
+          // Russian roulette (very light; keep stable)
+          float pcont = clamp(max(throughput.r, max(throughput.g, throughput.b)), 0.08, 0.98);
+          float rr2 = hash12(frag + float(uFrame) * 7.0 + float(bounce) * 29.0);
+          if (rr2 > pcont) break;
+          throughput /= pcont;
+        }
+
+        vec3 prev = texture2D(uPrev, vUv).rgb;
+        float f = float(uFrame);
+        vec3 col = (prev * f + radiance) / (f + 1.0);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    const blitVert = `
+      varying vec2 vUv;
+      void main(){
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `;
+
+    const blitFrag = `
+      precision highp float;
+      varying vec2 vUv;
+      uniform sampler2D uTex;
+      uniform float uExposure;
+      uniform float uGamma;
+
+      vec3 acesApprox(vec3 x){
+        // Simple ACES-ish fit
+        float a = 2.51;
+        float b = 0.03;
+        float c = 2.43;
+        float d = 0.59;
+        float e = 0.14;
+        return clamp((x*(a*x+b)) / (x*(c*x+d)+e), 0.0, 1.0);
+      }
+
+      void main(){
+        vec3 c = texture2D(uTex, vUv).rgb;
+        c *= uExposure;
+        c = acesApprox(c);
+        c = pow(c, vec3(1.0 / max(uGamma, 1e-3)));
+        gl_FragColor = vec4(c, 1.0);
+      }
+    `;
+
+    // Materials
+    const ptUniforms = {
+      uResolution: { value: new THREE.Vector2(1, 1) },
+      uFrame: { value: 0 },
+      uTime: { value: 0 },
+      uCamPos: { value: new THREE.Vector3() },
+      uCamRight: { value: new THREE.Vector3(1,0,0) },
+      uCamUp: { value: new THREE.Vector3(0,1,0) },
+      uCamForward: { value: new THREE.Vector3(0,0,-1) },
+      uTanFov: { value: 1.0 },
+      uAspect: { value: 1.0 },
+      uPrev: { value: null }
+    };
+
+    const ptMat = new THREE.ShaderMaterial({
+      uniforms: ptUniforms,
+      vertexShader: ptVert,
+      fragmentShader: ptFrag,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    const blitUniforms = {
+      uTex: { value: null },
+      uExposure: { value: 1.35 },
+      uGamma: { value: 2.2 }
+    };
+    const blitMat = new THREE.ShaderMaterial({
+      uniforms: blitUniforms,
+      vertexShader: blitVert,
+      fragmentShader: blitFrag,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), ptMat);
+    quadScene.add(quad);
+
+    const blitScene = new THREE.Scene();
+    const blitQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blitMat);
+    blitScene.add(blitQuad);
+
+    function resetAccum() {
+      frame = 0;
+      elSamples.textContent = "0";
+    }
+
+    // Resize and render target allocation
+    function resize() {
+      const w = Math.max(2, Math.floor(window.innerWidth * renderer.getPixelRatio()));
+      const h = Math.max(2, Math.floor(window.innerHeight * renderer.getPixelRatio()));
+
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      viewCam.aspect = window.innerWidth / Math.max(1, window.innerHeight);
+      viewCam.updateProjectionMatrix();
+
+      if (rtA) rtA.dispose();
+      if (rtB) rtB.dispose();
+
+      // Lower internal res when "low quality" is selected.
+      const scale = highQuality ? 1.0 : 0.65;
+      const rw = Math.max(2, Math.floor(w * scale));
+      const rh = Math.max(2, Math.floor(h * scale));
+      rtA = makeRT(rw, rh);
+      rtB = makeRT(rw, rh);
+
+      ptUniforms.uResolution.value.set(rw, rh);
+      ptUniforms.uAspect.value = rw / Math.max(1, rh);
+
+      resetAccum();
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // Detect camera change: compare a few values and reset accumulation.
+    const prevCam = {
+      pos: new THREE.Vector3(),
+      target: new THREE.Vector3(),
+      theta: orbit.state.theta,
+      phi: orbit.state.phi,
+      radius: orbit.state.radius
+    };
+
+    function cameraChanged() {
+      // Track orbit state changes (more reliable than float matrix compares).
+      const s = orbit.state;
+      const changed =
+        Math.abs(s.theta - prevCam.theta) > 1e-6 ||
+        Math.abs(s.phi - prevCam.phi) > 1e-6 ||
+        Math.abs(s.radius - prevCam.radius) > 1e-6 ||
+        s.target.distanceTo(prevCam.target) > 1e-6;
+      if (!changed) return false;
+      prevCam.theta = s.theta;
+      prevCam.phi = s.phi;
+      prevCam.radius = s.radius;
+      prevCam.target.copy(s.target);
+      return true;
+    }
+
+    // HUD buttons
+    document.getElementById("reset").addEventListener("click", () => resetAccum());
+    document.getElementById("quality").addEventListener("click", () => {
+      highQuality = !highQuality;
+      resize();
+    });
+
+    // FPS
+    let fpsAcc = 0;
+    let fpsN = 0;
+    let lastFpsT = performance.now();
+    let lastT = performance.now();
+
+    function updateCameraUniforms() {
+      // Basis vectors in world space.
+      const right = new THREE.Vector3();
+      const up = new THREE.Vector3();
+      const z = new THREE.Vector3();
+      viewCam.matrixWorld.extractBasis(right, up, z);
+      const forward = z.clone().multiplyScalar(-1); // camera looks down -Z
+
+      ptUniforms.uCamPos.value.copy(viewCam.position);
+      ptUniforms.uCamRight.value.copy(right.normalize());
+      ptUniforms.uCamUp.value.copy(up.normalize());
+      ptUniforms.uCamForward.value.copy(forward.normalize());
+
+      ptUniforms.uTanFov.value = Math.tan(THREE.MathUtils.degToRad(viewCam.fov * 0.5));
+    }
+
+    function render(now) {
+      const dt = Math.max(0.0001, (now - lastT) / 1000);
+      lastT = now;
+
+      fpsAcc += 1 / dt;
+      fpsN += 1;
+      if (now - lastFpsT > 400) {
+        elFps.textContent = String(Math.round(fpsAcc / Math.max(1, fpsN)));
+        fpsAcc = 0;
+        fpsN = 0;
+        lastFpsT = now;
+      }
+
+      // Reset accumulation when camera changes.
+      if (cameraChanged()) resetAccum();
+
+      updateCameraUniforms();
+
+      ptUniforms.uTime.value = now * 0.001;
+      ptUniforms.uFrame.value = frame;
+
+      // Path trace pass: prev -> curr
+      const prev = (frame % 2 === 0) ? rtA : rtB;
+      const curr = (frame % 2 === 0) ? rtB : rtA;
+      ptUniforms.uPrev.value = prev.texture;
+
+      quad.material = ptMat;
+      renderer.setRenderTarget(curr);
+      renderer.render(quadScene, quadCam);
+
+      // Blit + tonemap
+      blitUniforms.uTex.value = curr.texture;
+      renderer.setRenderTarget(null);
+      renderer.render(blitScene, quadCam);
+
+      frame += 1;
+      elSamples.textContent = String(frame);
+      requestAnimationFrame(render);
+    }
+
+    // Kick off
+    elMode.textContent = "path";
+    requestAnimationFrame(render);
+
+    // If module loads but WebGL target type fails, show hint in console.
+    // If module import fails entirely, the catch below will show the warn banner.
+  </script>
+
+  <script>
+    // Show a friendly warning if module import fails (e.g. CORS in file:// context).
+    // This runs only if the module script errors before executing.
+    window.addEventListener("error", function (e) {
+      const msg = String(e.message || "");
+      if (msg.toLowerCase().includes("import") || msg.toLowerCase().includes("module")) {
+        const w = document.getElementById("warn");
+        if (w) w.style.display = "block";
+      }
+    });
+  </script>
+</body>
+</html>
+
